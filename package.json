@@ -1,6 +1,6 @@
 {
-  "name": "@jenniferplusplus/opentelemetry-instrumentation-bullmq",
-  "version": "0.2.2",
+  "name": "@screencastify/opentelemetry-instrumentation-bullmq",
+  "version": "0.2.2-sc.1",
   "description": "Auto-instrumentation for the BullMQ message framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
     "dist/"
   ],
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . && cp NOTICE dist/. && cp LICENSE dist/.",
     "compile:watch": "tsc -w",
     "lint": "eslint src/ test/ --ext .ts",
     "lint:fix": "eslint src/ test/ --ext .ts --fix",
@@ -22,6 +22,11 @@
     "tracing"
   ],
   "author": "\"Jennifer Moore\" <contact@jenniferplusplus.com>",
+  "contributors": [
+    "\"Derrick Gill\" <derrick@screencastify.com>",
+    "\"Trevor Robinson\" (https://github.com/trevorr)",
+    "\"Cai Leao\" (https://github.com/cainaleaouk)"
+  ],
   "license": "Apache-2.0",
   "dependencies": {
     "@opentelemetry/api": "^1.3.0",
@@ -60,10 +65,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jenniferplusplus/opentelemetry-instrumentation-bullmq.git"
+    "url": "git+https://github.com/screencastify/opentelemetry-instrumentation-bullmq.git"
   },
   "bugs": {
-    "url": "https://github.com/jenniferplusplus/opentelemetry-instrumentation-bullmq/issues"
+    "url": "https://github.com/screencastify/opentelemetry-instrumentation-bullmq/issues"
   },
-  "homepage": "https://github.com/jenniferplusplus/opentelemetry-instrumentation-bullmq#readme"
+  "homepage": "https://github.com/screencastify/opentelemetry-instrumentation-bullmq#readme"
 }
