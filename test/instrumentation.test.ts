@@ -1,227 +1,95 @@
-// import rewiremock from 'rewiremock';
-// rewiremock.overrideEntryPoint(module);
+import * as testUtils from '@opentelemetry/contrib-test-utils';
+import * as sinon from 'sinon';
+import type * as bullmq from 'bullmq';
+import { removeAllQueueData } from 'bullmq';
 
-import * as assert from 'assert';
-// const Redis = require('ioredis-mock');
-// rewiremock('ioredis').with(Redis);
-// rewiremock.enable();
-
-import { context, propagation, SpanStatusCode } from '@opentelemetry/api';
-import { W3CTraceContextPropagator } from '@opentelemetry/core';
+import { default as IORedis } from 'ioredis';
+import { context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
-import type * as bullmq from 'bullmq';
+import { v4 } from 'uuid';
 
-import {BullMQInstrumentation} from '../src'
+import { BullMQInstrumentation } from '../src'
 
-// rewiremock.disable();
+const memoryExporter = new InMemorySpanExporter();
 
-let Queue: typeof bullmq.Queue;
-let FlowProducer: typeof bullmq.FlowProducer;
-let Worker: typeof bullmq.Worker;
+const CONFIG = {
+  host: process.env.OPENTELEMETRY_REDIS_HOST || 'localhost',
+  port: parseInt(process.env.OPENTELEMETRY_REDIS_PORT || '63790', 10),
+};
 
+describe('BullMQ Instrumentation', () => {
+  let sandbox: sinon.SinonSandbox;
+  let instrumentation: BullMQInstrumentation;
+  let contextManager: AsyncHooksContextManager;
 
-function getWait(): [Promise<any>, Function, Function] {
-  let resolve: Function;
-  let reject: Function
-  const p = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
+  let Queue: typeof bullmq.Queue;
 
-  // @ts-ignore
-  return [p, resolve, reject];
-}
-
-describe('bullmq', () => {
-  const instrumentation = new BullMQInstrumentation();
-  const connection = {host: 'localhost'};
   const provider = new NodeTracerProvider();
-  const memoryExporter = new InMemorySpanExporter();
-  const spanProcessor = new SimpleSpanProcessor(memoryExporter);
-  provider.addSpanProcessor(spanProcessor);
-  const contextManager = new AsyncHooksContextManager();
 
-  beforeEach(() => {
-    contextManager.enable();
-    context.setGlobalContextManager(contextManager);
-    instrumentation.setTracerProvider(provider);
-    instrumentation.enable();
-    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
-
-    /* eslint-disable @typescript-eslint/no-var-requires */
-    Worker = require('bullmq').Worker;
-    Queue = require('bullmq').Queue;
-    FlowProducer = require('bullmq').FlowProducer;
-    /* eslint-enable @typescript-eslint/no-var-requires */
+  before(function () {
+    testUtils.startDocker('redis');
   });
 
-  afterEach(() => {
-    contextManager.disable();
-    contextManager.enable();
-    memoryExporter.reset();
-    instrumentation.disable();
-  });
+  after(function () {
+    testUtils.cleanUpDocker('redis');
+  })
 
   describe('Queue', () => {
-    it('should not generate any spans when disabled', async () => {
-      instrumentation.disable();
-      const q = new Queue('disabled', {connection});
-      await q.add('testJob', {test: 'yes'});
+    let queue: bullmq.Queue;
+    let queueName: string;
 
-      const spans = memoryExporter.getFinishedSpans();
-      assert.strictEqual(spans.length, 0);
+    beforeEach(async function () {
+      sandbox = sinon.createSandbox();
+      queueName = `test-${v4()}`;
+
+      contextManager = new AsyncHooksContextManager().enable();
+      context.setGlobalContextManager(contextManager);
+      provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
+      instrumentation = new BullMQInstrumentation();
+      instrumentation.setTracerProvider(provider);
+      instrumentation.enable()
+
+      Queue = require('bullmq').Queue;
+
+      queue = new Queue(queueName, { connection: CONFIG });
+      await queue.waitUntilReady();
     });
 
-    it('should create a span for add', async () => {
-      const q = new Queue('queue', {connection});
-      await q.add('testJob', {test: 'yes'});
-
-      const span = memoryExporter.getFinishedSpans()
-        .find(span => span.name.includes('Queue.add'));
-      assert.notStrictEqual(span, undefined);
+    afterEach(async function () {
+      sandbox.restore();
+      context.disable();
+      await queue.close();
+      await removeAllQueueData(new IORedis(CONFIG.port), queueName);
     });
 
-    it('should create a span for addBulk', async () => {
-      const q = new Queue('queue', {connection});
-      await q.addBulk([{name: 'testJob', data: {test: 'yes'}}])
+    it('should create a Job.addJob span when calling add method', async () => {
+      sandbox.useFakeTimers({ shouldAdvanceTime: true, advanceTimeDelta: 1 })
 
-      const span = memoryExporter.getFinishedSpans()
-        .find(span => span.name.includes('Queue.addBulk'));
-      assert.notStrictEqual(span, undefined);
-    });
-  });
+      const expectedJobName = 'testJob';
 
-  describe('FlowProducer', () => {
-    it('should not generate any spans when disabled', async () => {
-      instrumentation.disable();
-      const q = new FlowProducer();
-      await q.add({name: 'testJob', queueName: 'disabled'});
+      const expectedAttributes = {
+        'message.id': 'unknown',
+        'messaging.bullmq.job.name': expectedJobName,
+        'messaging.bullmq.job.opts.attempts': 0,
+        'messaging.bullmq.job.opts.delay': 0,
+        'messaging.bullmq.job.parentOpts.parentKey': 'unknown',
+        'messaging.bullmq.job.parentOpts.waitChildrenKey': 'unknown',
+        'messaging.bullmq.job.timestamp': 0,
+        'messaging.destination': queueName,
+        'messaging.system': 'BullMQ'
+      }
 
-      const spans = memoryExporter.getFinishedSpans();
-      assert.strictEqual(spans.length, 0);
-    });
+      await queue.add(expectedJobName, { test: 'yes' });
 
-    it('should create a span for add', async () => {
-      const q = new FlowProducer();
-      await q.add({name: 'testJob', queueName: 'flow'});
+      const endedSpans = memoryExporter.getFinishedSpans();
 
-      const span = memoryExporter.getFinishedSpans()
-        .find(span => span.name.includes('FlowProducer.add'));
-      assert.notStrictEqual(span, undefined);
-    });
-
-    it('should create a span for addBulk', async () => {
-      const q = new FlowProducer();
-      await q.addBulk([{name: 'testJob', queueName: 'flow'}]);
-
-      const span = memoryExporter.getFinishedSpans()
-        .find(span => span.name.includes('FlowProducer.addBulk'));
-      assert.notStrictEqual(span, undefined);
-    });
-  });
-
-  describe('Worker', () => {
-    it('should not generate any spans when disabled', async () => {
-      instrumentation.disable();
-      const w = new Worker('disabled', async () => undefined, {connection})
-      await w.waitUntilReady();
-
-      const q = new Queue('disabled', {connection});
-      await q.add('testJob', {test: 'yes'});
-
-      const spans = memoryExporter.getFinishedSpans();
-      assert.strictEqual(spans.length, 0);
-    });
-
-    it('should create a span for the processor', async () => {
-      const [processor, processorDone] = getWait();
-
-      const w = new Worker('worker', async () => {
-        processorDone(); return {completed: new Date().toTimeString()}
-      }, {connection})
-      await w.waitUntilReady();
-
-      const q = new Queue('worker', {connection});
-      await q.add('testJob', {test: 'yes'});
-
-      await processor;
-      await w.close();
-
-      const span = memoryExporter.getFinishedSpans()
-        .find(span => span.name.includes('Worker.worker'));
-      assert.notStrictEqual(span, undefined);
-    });
-
-    it('should propagate from the producer', async () => {
-      const [processor, processorDone] = getWait();
-
-      const q = new Queue('worker', {connection});
-      const w = new Worker('worker', async () => {
-        processorDone(); return {completed: new Date().toTimeString()}
-      }, {connection})
-      await w.waitUntilReady();
-
-      await q.add('testJob', {started: new Date().toTimeString()});
-
-      await processor;
-      await w.close();
-
-      const consumer = memoryExporter.getFinishedSpans().find(span => span.name.includes('Worker.worker'));
-      const producer = memoryExporter.getFinishedSpans().find(span => span.name.includes('Job.addJob'));
-
-      assert.notStrictEqual(consumer, undefined);
-      assert.notStrictEqual(producer, undefined);
-      assert.strictEqual(producer?.spanContext().spanId, consumer?.parentSpanId);
-    });
-
-    it('should capture events from the processor', async () => {
-      const [processor, processorDone] = getWait();
-
-      const q = new Queue('worker', {connection});
-      const w = new Worker('worker', async (job, token) => {
-        await job.extendLock(token as string, 20);
-        processorDone();
-        return {completed: new Date().toTimeString()}
-      }, {connection})
-      await w.waitUntilReady();
-
-      await q.add('testJob', {started: new Date().toTimeString()});
-
-      await processor;
-      await w.close();
-
-      const span = memoryExporter.getFinishedSpans().find(span => span.name.includes('Worker.worker'));
-      const evt = span?.events.find(event => event.name.includes('extendLock'));
-
-      assert.notStrictEqual(evt, undefined);
-    });
-
-    it('should capture errors from the processor', async () => {
-      const [processor, processorDone] = getWait();
-
-      const q = new Queue('worker', {connection});
-      const w = new Worker('worker', async () => {
-        processorDone();
-        throw new Error('forced error');
-      }, {connection})
-      await w.waitUntilReady();
-
-      await q.add('testJob', {started: new Date().toTimeString()});
-
-      await processor;
-      await w.close();
-
-      const span = memoryExporter.getFinishedSpans().find(span => span.name.includes('Worker.worker'));
-      const evt = span?.events.find(event => event.name.includes('exception'));
-
-      assert.notStrictEqual(evt, undefined);
-      assert.strictEqual(span?.status.code, SpanStatusCode.ERROR);
-      assert.strictEqual(span?.status.message, 'forced error');
+      const addJobSpan = endedSpans.filter(span => span.name.includes('Job.addJob'))[0];
+      testUtils.assertSpan(addJobSpan, SpanKind.PRODUCER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
   });
 });
