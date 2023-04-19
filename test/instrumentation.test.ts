@@ -264,7 +264,7 @@ describe('BullMQ Instrumentation', () => {
       const consumerSpan = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0];
 
       // ASSERT
-      //@ts-expect-error dfdf
+      //@ts-expect-error producerSpan still works at runtime
       testUtils.assertPropagation(consumerSpan, producerSpan);
     });
   });
