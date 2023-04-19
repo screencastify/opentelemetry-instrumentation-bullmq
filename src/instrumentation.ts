@@ -13,16 +13,16 @@ limitations under the License.
 
 This derivative work has modifications by Screencastify staff for internal usage
 */
+import type {Attributes, Span} from '@opentelemetry/api'
+import type * as bullmq from 'bullmq';
+import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
 import {
   InstrumentationBase,
   InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
 } from '@opentelemetry/instrumentation';
 import {SemanticAttributes} from '@opentelemetry/semantic-conventions';
-import type {Attributes, Span} from '@opentelemetry/api'
-import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
-import type * as bullmq from 'bullmq';
-import type {
+import {
   Job,
   JobsOptions,
   ParentOpts,
@@ -30,8 +30,8 @@ import type {
 } from 'bullmq';
 import {flatten} from 'flat';
 
-import {VERSION} from './version';
 import {BullMQAttributes} from './attributes';
+import {VERSION} from './version';
 
 
 export class Instrumentation extends InstrumentationBase {

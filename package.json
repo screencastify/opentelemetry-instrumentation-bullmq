@@ -53,6 +53,8 @@
     "@typescript-eslint/parser": "^5.35.1",
     "bullmq": "^3.5.1",
     "eslint": "^8.23.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-simple-import-sort": "^10.0.0",
     "ioredis-mock": "^8.2.2",
     "mocha": "^10.0.0",
     "nyc": "^15.1.0",

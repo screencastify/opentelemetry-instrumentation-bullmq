@@ -13,19 +13,18 @@ limitations under the License.
 
 This derivative work has modifications by Screencastify staff for internal usage
 */
-import * as testUtils from '@opentelemetry/contrib-test-utils';
-import * as sinon from 'sinon';
 import type * as bullmq from 'bullmq';
-import { removeAllQueueData } from 'bullmq';
-
-import { default as IORedis } from 'ioredis';
 import { context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import * as testUtils from '@opentelemetry/contrib-test-utils';
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { removeAllQueueData } from 'bullmq';
+import { default as IORedis } from 'ioredis';
+import * as sinon from 'sinon';
 import { v4 } from 'uuid';
 
 import { BullMQInstrumentation } from '../src'
@@ -83,6 +82,7 @@ describe('BullMQ Instrumentation', () => {
       instrumentation.setTracerProvider(provider);
       instrumentation.enable()
 
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       Queue = require('bullmq').Queue;
 
       queue = new Queue(queueName, { connection: CONFIG });
@@ -162,8 +162,11 @@ describe('BullMQ Instrumentation', () => {
       instrumentation.setTracerProvider(provider);
       instrumentation.enable()
 
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       Queue = require('bullmq').Queue;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       QueueEvents = require('bullmq').QueueEvents;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       Worker = require('bullmq').Worker;
 
       queue = new Queue(queueName, { connection: CONFIG });
