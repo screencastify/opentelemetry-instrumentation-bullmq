@@ -37,12 +37,26 @@ const CONFIG = {
   port: parseInt(process.env.OPENTELEMETRY_REDIS_PORT || '63790', 10),
 };
 
+let Queue: typeof bullmq.Queue;
+let QueueEvents: typeof bullmq.QueueEvents;
+let Worker: typeof bullmq.Worker;
+
+function getWait(): [Promise<any>, Function, Function] {
+  let resolve: Function;
+  let reject: Function
+  const p = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  // @ts-ignore
+  return [p, resolve, reject];
+}
+
 describe('BullMQ Instrumentation', () => {
   let sandbox: sinon.SinonSandbox;
   let instrumentation: BullMQInstrumentation;
   let contextManager: AsyncHooksContextManager;
-
-  let Queue: typeof bullmq.Queue;
 
   const provider = new NodeTracerProvider();
 
@@ -77,6 +91,10 @@ describe('BullMQ Instrumentation', () => {
 
     afterEach(async function () {
       sandbox.restore();
+      contextManager.disable();
+      contextManager.enable();
+      memoryExporter.reset();
+      instrumentation.disable();
       context.disable();
       await queue.close();
       await removeAllQueueData(new IORedis(CONFIG.port), queueName);
@@ -125,6 +143,90 @@ describe('BullMQ Instrumentation', () => {
 
       const addBulkSpan = endedSpans.filter(span => span.name.includes('Queue.addBulk'))[0];
       testUtils.assertSpan(addBulkSpan, SpanKind.INTERNAL, expectedAttributes, [], { code: SpanStatusCode.UNSET })
+    });
+  });
+
+  describe('Worker', () => {
+    let queue: bullmq.Queue;
+    let queueEvents: bullmq.QueueEvents;
+    let queueName: string;
+
+    beforeEach(async function () {
+      sandbox = sinon.createSandbox();
+      queueName = `test-${v4()}`;
+
+      contextManager = new AsyncHooksContextManager().enable();
+      context.setGlobalContextManager(contextManager);
+      provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
+      instrumentation = new BullMQInstrumentation();
+      instrumentation.setTracerProvider(provider);
+      instrumentation.enable()
+
+      Queue = require('bullmq').Queue;
+      QueueEvents = require('bullmq').QueueEvents;
+      Worker = require('bullmq').Worker;
+
+      queue = new Queue(queueName, { connection: CONFIG });
+      queueEvents = new QueueEvents(queueName, { connection: CONFIG });
+      await queueEvents.waitUntilReady();
+    });
+
+    afterEach(async function () {
+      sandbox.restore();
+      contextManager.disable();
+      contextManager.enable();
+      memoryExporter.reset();
+      instrumentation.disable();
+      context.disable();
+      await queue.close();
+      await queueEvents.close();
+      await removeAllQueueData(new IORedis(CONFIG.port), queueName);
+    });
+
+
+    it('should create a Worker.${jobName} span when calling callProcessJob method', async () => {
+      sandbox.useFakeTimers();
+
+      const expectedJobName = 'testJob';
+
+      const expectedAttributes = {
+        'messaging.bullmq.job.attempts': 1,
+        'messaging.bullmq.job.delay': 0,
+        'messaging.bullmq.job.name': expectedJobName,
+        'messaging.bullmq.job.opts.attempts': 0,
+        'messaging.bullmq.job.opts.delay': 0,
+        'messaging.bullmq.job.processedOn': 30000,
+        'messaging.bullmq.job.timestamp': 0,
+        'messaging.bullmq.queue.name': queueName,
+        'messaging.bullmq.worker.name': queueName,
+        'messaging.consumer_id': queueName,
+        'messaging.message_id': '1',
+        'messaging.operation': 'receive',
+        'messaging.system': 'BullMQ'
+      };
+
+      const [processor, processorDone] = getWait();
+
+      const w = new Worker(queueName, async () => {
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+        await processorDone();
+        return { completed: new Date().toTimeString() }
+      }, { connection: CONFIG })
+      await w.waitUntilReady();
+
+
+      await queue.add('testJob', { test: 'yes' });
+
+      sandbox.clock.tick(1000);
+      sandbox.clock.next();
+
+      await processor;
+      await w.close();
+
+      const endedSpans = memoryExporter.getFinishedSpans();
+      const workerSpan = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0];
+      testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
   });
 });
