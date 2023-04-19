@@ -13,16 +13,16 @@ limitations under the License.
 
 This derivative work has modifications by Screencastify staff for internal usage
 */
+import type {Attributes, Span} from '@opentelemetry/api'
+import type * as bullmq from 'bullmq';
+import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
 import {
   InstrumentationBase,
   InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
 } from '@opentelemetry/instrumentation';
 import {SemanticAttributes} from '@opentelemetry/semantic-conventions';
-import type {Attributes, Span} from '@opentelemetry/api'
-import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
-import type * as bullmq from 'bullmq';
-import type {
+import {
   Job,
   JobsOptions,
   ParentOpts,
@@ -30,8 +30,8 @@ import type {
 } from 'bullmq';
 import {flatten} from 'flat';
 
-import {VERSION} from './version';
 import {BullMQAttributes} from './attributes';
+import {VERSION} from './version';
 
 
 export class Instrumentation extends InstrumentationBase {
@@ -131,8 +131,8 @@ export class Instrumentation extends InstrumentationBase {
     const action = 'Queue.addBulk';
 
     return function addBulk(original) {
-      return async function patch(this: bullmq.Queue, ...args: bullmq.Job[]): Promise<bullmq.Job[]> {
-        const names = args.map(job => job.name);
+      return async function patch(this: bullmq.Queue, ...args: [bullmq.Job[]]): Promise<bullmq.Job[]> {
+        const names = args[0].map(job => job.name);
 
         const spanName = `${this.name} ${action}`;
         const span = tracer.startSpan(spanName, {
