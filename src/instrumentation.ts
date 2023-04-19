@@ -131,8 +131,8 @@ export class Instrumentation extends InstrumentationBase {
     const action = 'Queue.addBulk';
 
     return function addBulk(original) {
-      return async function patch(this: bullmq.Queue, ...args: bullmq.Job[]): Promise<bullmq.Job[]> {
-        const names = args.map(job => job.name);
+      return async function patch(this: bullmq.Queue, ...args: [bullmq.Job[]]): Promise<bullmq.Job[]> {
+        const names = args[0].map(job => job.name);
 
         const spanName = `${this.name} ${action}`;
         const span = tracer.startSpan(spanName, {
