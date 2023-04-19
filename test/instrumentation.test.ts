@@ -14,9 +14,10 @@ limitations under the License.
 This derivative work has modifications by Screencastify staff for internal usage
 */
 import type * as bullmq from 'bullmq';
-import { context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { context, propagation, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 import * as testUtils from '@opentelemetry/contrib-test-utils';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
@@ -58,6 +59,8 @@ describe('BullMQ Instrumentation', () => {
   provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
   const instrumentation = new BullMQInstrumentation();
   instrumentation.setTracerProvider(provider);
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+
 
   let sandbox: sinon.SinonSandbox;
   let contextManager: AsyncHooksContextManager;
@@ -226,10 +229,43 @@ describe('BullMQ Instrumentation', () => {
 
       const endedSpans = memoryExporter.getFinishedSpans();
 
+      const { traceId, spanId } = endedSpans.filter(span => span.name.includes('Job.addJob'))[0].spanContext();
       const workerSpan = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0];
 
       // ASSERT
-      testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
+      testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, { ...expectedAttributes, 'messaging.bullmq.job.opts.traceparent': `00-${traceId}-${spanId}-01` }, [], { code: SpanStatusCode.UNSET })
+    });
+
+    it('propagates Worker.${jobName} span from the addJobSpan', async () => {
+      sandbox.useFakeTimers();
+
+      const [processor, processorDone] = getWait();
+
+      const w = new Worker(queueName, async () => {
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+        await processorDone();
+        return { completed: new Date().toTimeString() }
+      }, { connection: CONFIG })
+      await w.waitUntilReady();
+
+
+      await queue.add('testJob', { test: 'yes' });
+
+      sandbox.clock.tick(1000);
+      sandbox.clock.next();
+
+      await processor;
+      await w.close();
+
+      const endedSpans = memoryExporter.getFinishedSpans();
+
+      const producerSpan = endedSpans.filter(span => span.name.includes('Job.addJob'))[0];
+      const consumerSpan = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0];
+
+      // ASSERT
+      //@ts-expect-error dfdf
+      testUtils.assertPropagation(consumerSpan, producerSpan);
     });
   });
 });
