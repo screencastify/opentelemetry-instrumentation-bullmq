@@ -39,7 +39,6 @@ const CONFIG = {
 };
 
 let Queue: typeof bullmq.Queue;
-let QueueEvents: typeof bullmq.QueueEvents;
 let Worker: typeof bullmq.Worker;
 
 function getWait(): [Promise<any>, Function, Function] {
@@ -158,7 +157,6 @@ describe('BullMQ Instrumentation', () => {
 
   describe('Worker', () => {
     let queue: bullmq.Queue;
-    let queueEvents: bullmq.QueueEvents;
     let queueName: string;
 
     beforeEach(async function () {
@@ -169,20 +167,16 @@ describe('BullMQ Instrumentation', () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       Queue = require('bullmq').Queue;
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      QueueEvents = require('bullmq').QueueEvents;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       Worker = require('bullmq').Worker;
 
       queue = new Queue(queueName, { connection: CONFIG });
-      queueEvents = new QueueEvents(queueName, { connection: CONFIG });
-      await queueEvents.waitUntilReady();
+      await queue.waitUntilReady();
     });
 
     afterEach(async function () {
       sandbox.restore();
       instrumentation.disable();
       await queue.close();
-      await queueEvents.close();
       await removeAllQueueData(new IORedis(CONFIG.port), queueName);
     });
 
