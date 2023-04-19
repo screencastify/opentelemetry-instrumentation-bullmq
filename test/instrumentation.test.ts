@@ -22,6 +22,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import * as assert from 'assert';
 import { removeAllQueueData } from 'bullmq';
 import { default as IORedis } from 'ioredis';
 import * as sinon from 'sinon';
@@ -53,11 +54,25 @@ function getWait(): [Promise<any>, Function, Function] {
 }
 
 describe('BullMQ Instrumentation', () => {
+  const provider = new NodeTracerProvider();
+  provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
+  const instrumentation = new BullMQInstrumentation();
+  instrumentation.setTracerProvider(provider);
+
   let sandbox: sinon.SinonSandbox;
-  let instrumentation: BullMQInstrumentation;
   let contextManager: AsyncHooksContextManager;
 
-  const provider = new NodeTracerProvider();
+  beforeEach(async function () {
+    contextManager = new AsyncHooksContextManager();
+    context.setGlobalContextManager(contextManager.enable());
+
+    assert.strictEqual(memoryExporter.getFinishedSpans().length, 0);
+  });
+
+  afterEach(() => {
+    memoryExporter.reset();
+    context.disable();
+  });
 
   before(function () {
     testUtils.startDocker('redis');
@@ -74,12 +89,6 @@ describe('BullMQ Instrumentation', () => {
     beforeEach(async function () {
       sandbox = sinon.createSandbox();
       queueName = `test-${v4()}`;
-
-      contextManager = new AsyncHooksContextManager().enable();
-      context.setGlobalContextManager(contextManager);
-      provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
-      instrumentation = new BullMQInstrumentation();
-      instrumentation.setTracerProvider(provider);
       instrumentation.enable()
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -91,11 +100,7 @@ describe('BullMQ Instrumentation', () => {
 
     afterEach(async function () {
       sandbox.restore();
-      contextManager.disable();
-      contextManager.enable();
-      memoryExporter.reset();
       instrumentation.disable();
-      context.disable();
       await queue.close();
       await removeAllQueueData(new IORedis(CONFIG.port), queueName);
     });
@@ -120,8 +125,9 @@ describe('BullMQ Instrumentation', () => {
       await queue.add(expectedJobName, { test: 'yes' });
 
       const endedSpans = memoryExporter.getFinishedSpans();
-
       const addJobSpan = endedSpans.filter(span => span.name.includes('Job.addJob'))[0];
+
+      // ASSERT
       testUtils.assertSpan(addJobSpan, SpanKind.PRODUCER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
 
@@ -140,8 +146,9 @@ describe('BullMQ Instrumentation', () => {
       await queue.addBulk(expectedJobs)
 
       const endedSpans = memoryExporter.getFinishedSpans()
-
       const addBulkSpan = endedSpans.filter(span => span.name.includes('Queue.addBulk'))[0];
+
+      // ASSERT
       testUtils.assertSpan(addBulkSpan, SpanKind.INTERNAL, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
   });
@@ -154,12 +161,6 @@ describe('BullMQ Instrumentation', () => {
     beforeEach(async function () {
       sandbox = sinon.createSandbox();
       queueName = `test-${v4()}`;
-
-      contextManager = new AsyncHooksContextManager().enable();
-      context.setGlobalContextManager(contextManager);
-      provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
-      instrumentation = new BullMQInstrumentation();
-      instrumentation.setTracerProvider(provider);
       instrumentation.enable()
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -176,11 +177,7 @@ describe('BullMQ Instrumentation', () => {
 
     afterEach(async function () {
       sandbox.restore();
-      contextManager.disable();
-      contextManager.enable();
-      memoryExporter.reset();
       instrumentation.disable();
-      context.disable();
       await queue.close();
       await queueEvents.close();
       await removeAllQueueData(new IORedis(CONFIG.port), queueName);
@@ -228,7 +225,10 @@ describe('BullMQ Instrumentation', () => {
       await w.close();
 
       const endedSpans = memoryExporter.getFinishedSpans();
+
       const workerSpan = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0];
+
+      // ASSERT
       testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
   });
