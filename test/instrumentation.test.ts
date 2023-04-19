@@ -91,5 +91,25 @@ describe('BullMQ Instrumentation', () => {
       const addJobSpan = endedSpans.filter(span => span.name.includes('Job.addJob'))[0];
       testUtils.assertSpan(addJobSpan, SpanKind.PRODUCER, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
+
+    it('should create a Queue.addBulk span when calling addBulk method', async () => {
+      sandbox.useFakeTimers({ shouldAdvanceTime: true, advanceTimeDelta: 1 })
+
+      const expectedJobs = [{ name: 'testJob1', data: { test: 'yes' } }, { name: 'testJob2', data: { test: 'no' } }];
+
+      const expectedAttributes = {
+        'messaging.bullmq.job.bulk.count': expectedJobs.length,
+        'messaging.bullmq.job.bulk.names': [expectedJobs[0].name, expectedJobs[1].name],
+        'messaging.destination': queueName,
+        'messaging.system': 'BullMQ'
+      }
+
+      await queue.addBulk(expectedJobs)
+
+      const endedSpans = memoryExporter.getFinishedSpans()
+
+      const addBulkSpan = endedSpans.filter(span => span.name.includes('Queue.addBulk'))[0];
+      testUtils.assertSpan(addBulkSpan, SpanKind.INTERNAL, expectedAttributes, [], { code: SpanStatusCode.UNSET })
+    });
   });
 });
