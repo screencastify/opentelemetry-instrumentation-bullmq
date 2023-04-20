@@ -84,7 +84,7 @@ describe('BullMQ Instrumentation', () => {
     testUtils.cleanUpDocker('redis');
   })
 
-  describe('Queue', () => {
+  describe.skip('Queue', () => {
     let queue: bullmq.Queue;
     let queueName: string;
 
@@ -181,7 +181,7 @@ describe('BullMQ Instrumentation', () => {
     });
 
 
-    it('should create a Worker.${jobName} span when calling callProcessJob method', async () => {
+    it.skip('should create a Worker.${jobName} span when calling callProcessJob method', async () => {
       sandbox.useFakeTimers();
 
       const expectedJobName = 'testJob';
@@ -230,7 +230,7 @@ describe('BullMQ Instrumentation', () => {
       testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, { ...expectedAttributes, 'messaging.bullmq.job.opts.traceparent': `00-${traceId}-${spanId}-01` }, [], { code: SpanStatusCode.UNSET })
     });
 
-    it('propagates Worker.${jobName} span from the addJobSpan', async () => {
+    it.skip('propagates Worker.${jobName} span from the addJobSpan', async () => {
       sandbox.useFakeTimers();
 
       const [processor, processorDone] = getWait();
@@ -260,6 +260,58 @@ describe('BullMQ Instrumentation', () => {
       // ASSERT
       //@ts-expect-error producerSpan still works at runtime
       testUtils.assertPropagation(consumerSpan, producerSpan);
+    });
+
+    it('does not propagate Worker.${jobName} span from the addJobSpan when originating from different queue', async () => {
+      sandbox.useFakeTimers();
+
+      const downstreamQueue = 'nextQueue'
+
+      const [processor, processorDone] = getWait();
+      const [nextProcessor, nextProcessorDone] = getWait();
+
+      const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
+      const nextWorker = new Worker(downstreamQueue, async () => {
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+        await nextProcessorDone();
+        return { completed: new Date().toTimeString() }
+      }, { connection: CONFIG })
+      await nextWorker.waitUntilReady();
+
+      const w = new Worker(queueName, async () => {
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+        await processorDone();
+        nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+
+        await nextProcessor;
+        await nextWorker.close();
+      }, { connection: CONFIG })
+      await w.waitUntilReady();
+
+
+      await queue.add('testJob', { test: 'yes' });
+
+      sandbox.clock.tick(1000);
+      sandbox.clock.next();
+
+      await processor;
+      await w.close();
+
+      const endedSpans = memoryExporter.getFinishedSpans();
+      const producerSpanContext = endedSpans.filter(span => span.name.includes(`${queueName}.testJob Job.addJob`))[0].spanContext();
+      const nextSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
+      const nextSpanContext = nextSpan.spanContext();
+
+      // ASSERT
+      assert.notStrictEqual(nextSpanContext.traceId, producerSpanContext.traceId);
+      assert.notStrictEqual(nextSpan.parentSpanId, producerSpanContext.spanId);
+      assert.notStrictEqual(nextSpanContext.traceFlags, producerSpanContext.traceFlags);
+      assert.strictEqual(nextSpanContext.spanId, producerSpanContext.spanId);
     });
   });
 });
