@@ -277,7 +277,46 @@ describe('BullMQ Instrumentation', () => {
       testUtils.assertPropagation(consumerSpan, producerSpan);
     });
 
-    it.skip('does not propagate Worker.${jobName} span from the addJobSpan when originating from different queue', async () => {
+    it('propagates addBulk span from the worker span when from same queue', async () => {
+      sandbox.useFakeTimers();
+      let keepGoing = true;
+
+      const [processor, processorDone] = getWait();
+
+      const w = new Worker(queueName, async () => {
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+        await processorDone();
+        if (keepGoing) {
+          keepGoing = false;
+          await queue.addBulk([{ name: 'testJob2', data: { test: 'no' } }]);
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+        }
+      }, { connection: CONFIG })
+      await w.waitUntilReady();
+
+      await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
+
+      sandbox.clock.tick(1000);
+      sandbox.clock.next();
+
+      await processor;
+      await w.close();
+
+      const endedSpans = memoryExporter.getFinishedSpans();
+
+      const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
+      const consumerSpans = endedSpans.filter(span => span.name.includes(`${queueName} Queue.addBulk`));
+      const consumerSpan = consumerSpans[consumerSpans.length - 1];
+      const consumerSpanContext = consumerSpan.spanContext();
+
+      // ASSERT
+      assert.strictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
+      assert.strictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
+    });
+
+    it('does not propagate addBulk span from the worker span when from different queue', async () => {
       sandbox.useFakeTimers();
 
       const downstreamQueue = 'nextQueue'
@@ -318,15 +357,13 @@ describe('BullMQ Instrumentation', () => {
       await w.close();
 
       const endedSpans = memoryExporter.getFinishedSpans();
-      const producerSpanContext = endedSpans.filter(span => span.name.includes(`${queueName}.testJob Job.addJob`))[0].spanContext();
-      const nextSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
-      const nextSpanContext = nextSpan.spanContext();
+      const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
+      const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
+      const consumerSpanContext = consumerSpan.spanContext();
 
       // ASSERT
-      assert.notStrictEqual(nextSpanContext.traceId, producerSpanContext.traceId);
-      assert.notStrictEqual(nextSpan.parentSpanId, producerSpanContext.spanId);
-      assert.notStrictEqual(nextSpanContext.traceFlags, producerSpanContext.traceFlags);
-      assert.strictEqual(nextSpanContext.spanId, producerSpanContext.spanId);
+      assert.notStrictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
+      assert.notStrictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
     });
   });
 });
