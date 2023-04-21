@@ -138,6 +138,7 @@ export class Instrumentation extends InstrumentationBase {
         const currentQueue = this.name;
         const baggage = propagation.getBaggage(context.active());
         const lastQueue = baggage?.getEntry('queue')?.value;
+        const shouldDiverge = !!lastQueue && lastQueue !== currentQueue;
 
         const spanName = `${currentQueue} ${action}`;
 
@@ -149,7 +150,9 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.JOB_BULK_COUNT]: names.length,
           },
           kind: SpanKind.INTERNAL,
-          root: !!lastQueue && lastQueue !== currentQueue
+          root: shouldDiverge,
+          // @ts-expect-error the existence of baggage nesscitates an active context
+          links: shouldDiverge ? [{ context: trace.getSpanContext(context.active()) }] : undefined
         });
 
         return Instrumentation.withContext(this, original, span, args);
