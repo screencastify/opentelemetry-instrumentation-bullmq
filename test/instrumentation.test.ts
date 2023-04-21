@@ -348,7 +348,7 @@ describe('BullMQ Instrumentation', () => {
       await w.waitUntilReady();
 
 
-      await queue.add('testJob', { test: 'yes' });
+      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
 
       sandbox.clock.tick(1000);
       sandbox.clock.next();

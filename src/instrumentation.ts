@@ -13,25 +13,25 @@ limitations under the License.
 
 This derivative work has modifications by Screencastify staff for internal usage
 */
-import type {Attributes, Span} from '@opentelemetry/api'
+import type { Attributes, Span } from '@opentelemetry/api'
 import type * as bullmq from 'bullmq';
-import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
+import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import {
   InstrumentationBase,
   InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
 } from '@opentelemetry/instrumentation';
-import {SemanticAttributes} from '@opentelemetry/semantic-conventions';
+import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import {
   Job,
   JobsOptions,
   ParentOpts,
   Worker,
 } from 'bullmq';
-import {flatten} from 'flat';
+import { flatten } from 'flat';
 
-import {BullMQAttributes} from './attributes';
-import {VERSION} from './version';
+import { BullMQAttributes } from './attributes';
+import { VERSION } from './version';
 
 
 export class Instrumentation extends InstrumentationBase {
@@ -88,7 +88,7 @@ export class Instrumentation extends InstrumentationBase {
     const action = 'Job.addJob';
 
     return function addJob(original) {
-      return async function patch(this:Job, client: never, parentOpts?: ParentOpts): Promise<string> {
+      return async function patch(this: Job, client: never, parentOpts?: ParentOpts): Promise<string> {
         const spanName = `${this.queueName}.${this.name} ${action}`;
         // this.opts = this.opts ?? {};
         const span = tracer.startSpan(spanName, {
@@ -134,7 +134,13 @@ export class Instrumentation extends InstrumentationBase {
       return async function patch(this: bullmq.Queue, ...args: [bullmq.Job[]]): Promise<bullmq.Job[]> {
         const names = args[0].map(job => job.name);
 
-        const spanName = `${this.name} ${action}`;
+        // get queue information from baggage to make propagation decision
+        const currentQueue = this.name;
+        const baggage = propagation.getBaggage(context.active());
+        const lastQueue = baggage?.getEntry('queue')?.value;
+
+        const spanName = `${currentQueue} ${action}`;
+
         const span = tracer.startSpan(spanName, {
           attributes: {
             [SemanticAttributes.MESSAGING_SYSTEM]: BullMQAttributes.MESSAGING_SYSTEM,
@@ -142,7 +148,8 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.JOB_BULK_NAMES]: names,
             [BullMQAttributes.JOB_BULK_COUNT]: names.length,
           },
-          kind: SpanKind.INTERNAL
+          kind: SpanKind.INTERNAL,
+          root: !!lastQueue && lastQueue !== currentQueue
         });
 
         return Instrumentation.withContext(this, original, span, args);
@@ -155,10 +162,10 @@ export class Instrumentation extends InstrumentationBase {
     const tracer = instrumentation.tracer;
 
     return function patch(original) {
-      return async function callProcessJob(this: Worker, job: any, ...rest: any[]){
+      return async function callProcessJob(this: Worker, job: any, ...rest: any[]) {
         const workerName = this.name ?? 'anonymous';
         const currentContext = context.active();
-        const parentContext = propagation.extract(currentContext, job.opts);
+        const parentContext = propagation.setBaggage(propagation.extract(currentContext, job.opts), propagation.createBaggage({ queue: { value: job.queueName } }))
 
         const spanName = `${job.queueName}.${job.name} Worker.${workerName} #${job.attemptsMade}`;
         const span = tracer.startSpan(spanName, {
@@ -205,7 +212,7 @@ export class Instrumentation extends InstrumentationBase {
   }
 
   private static attrMap(prefix: string, opts: JobsOptions): Attributes {
-    const attrs = flatten({[prefix]: opts}) as Attributes;
+    const attrs = flatten({ [prefix]: opts }) as Attributes;
     for (const key in attrs) {
       if (attrs[key] === undefined) delete attrs[key];
     }
