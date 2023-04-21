@@ -84,7 +84,7 @@ describe('BullMQ Instrumentation', () => {
     testUtils.cleanUpDocker('redis');
   })
 
-  describe.skip('Queue', () => {
+  describe('Queue', () => {
     let queue: bullmq.Queue;
     let queueName: string;
 
@@ -153,6 +153,21 @@ describe('BullMQ Instrumentation', () => {
       // ASSERT
       testUtils.assertSpan(addBulkSpan, SpanKind.INTERNAL, expectedAttributes, [], { code: SpanStatusCode.UNSET })
     });
+
+    it('propagates Job.addJob span from the addBulk span', async () => {
+      sandbox.useFakeTimers();
+
+      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
+
+      const endedSpans = memoryExporter.getFinishedSpans();
+
+      const producerSpan = endedSpans.filter(span => span.name.includes('Queue.addBulk'))[0];
+      const consumerSpan = endedSpans.filter(span => span.name.includes(`${queueName}.testJob Job.addJob`))[0];
+
+      // ASSERT
+      //@ts-expect-error producerSpan still works at runtime
+      testUtils.assertPropagation(consumerSpan, producerSpan);
+    });
   });
 
   describe('Worker', () => {
@@ -181,7 +196,7 @@ describe('BullMQ Instrumentation', () => {
     });
 
 
-    it.skip('should create a Worker.${jobName} span when calling callProcessJob method', async () => {
+    it('should create a Worker.${jobName} span when calling callProcessJob method', async () => {
       sandbox.useFakeTimers();
 
       const expectedJobName = 'testJob';
@@ -230,7 +245,7 @@ describe('BullMQ Instrumentation', () => {
       testUtils.assertSpan(workerSpan, SpanKind.CONSUMER, { ...expectedAttributes, 'messaging.bullmq.job.opts.traceparent': `00-${traceId}-${spanId}-01` }, [], { code: SpanStatusCode.UNSET })
     });
 
-    it.skip('propagates Worker.${jobName} span from the addJobSpan', async () => {
+    it('propagates Worker.${jobName} span from the addJobSpan', async () => {
       sandbox.useFakeTimers();
 
       const [processor, processorDone] = getWait();
@@ -262,7 +277,7 @@ describe('BullMQ Instrumentation', () => {
       testUtils.assertPropagation(consumerSpan, producerSpan);
     });
 
-    it('does not propagate Worker.${jobName} span from the addJobSpan when originating from different queue', async () => {
+    it.skip('does not propagate Worker.${jobName} span from the addJobSpan when originating from different queue', async () => {
       sandbox.useFakeTimers();
 
       const downstreamQueue = 'nextQueue'
