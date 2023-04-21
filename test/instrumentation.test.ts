@@ -403,6 +403,56 @@ describe('BullMQ Instrumentation', () => {
         assert.notStrictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
       });
 
+      it('has a child addJob span when worker is from different queue', async () => {
+        sandbox.useFakeTimers();
+
+        const downstreamQueue = 'nextQueue'
+
+        const [processor, processorDone] = getWait();
+        const [nextProcessor, nextProcessorDone] = getWait();
+
+        const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
+        const nextWorker = new Worker(downstreamQueue, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await nextProcessorDone();
+          return { completed: new Date().toTimeString() }
+        }, { connection: CONFIG })
+        await nextWorker.waitUntilReady();
+
+        const w = new Worker(queueName, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await processorDone();
+          nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+
+          await nextProcessor;
+          await nextWorker.close();
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
+
+
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
+
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+
+        await processor;
+        await w.close();
+
+        const endedSpans = memoryExporter.getFinishedSpans();
+        // endedSpans.forEach(span => console.log('span name', span.name));
+        const producerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
+        const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue}.testNextJob Job.addJob`))[0];
+
+        // ASSERT
+        //@ts-expect-error asdaasd
+        testUtils.assertPropagation(consumerSpan, producerSpan)
+      });
+
       it('has spanLinks when worker is from different queue', async () => {
         sandbox.useFakeTimers();
 
