@@ -89,6 +89,11 @@ export class Instrumentation extends InstrumentationBase {
 
     return function addJob(original) {
       return async function patch(this: Job, client: never, parentOpts?: ParentOpts): Promise<string> {
+        // get queue information from baggage to make propagation decision
+        const currentQueue = this.queueName;
+        const lastQueue = propagation.getBaggage(context.active())?.getEntry('queue')?.value;
+        const shouldDiverge = !!lastQueue && lastQueue !== currentQueue;
+
         const spanName = `${this.queueName}.${this.name} ${action}`;
         // this.opts = this.opts ?? {};
         const span = tracer.startSpan(spanName, {
@@ -98,7 +103,10 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.JOB_NAME]: this.name,
             ...Instrumentation.attrMap(BullMQAttributes.JOB_OPTS, this.opts),
           },
-          kind: SpanKind.PRODUCER
+          kind: SpanKind.PRODUCER,
+          root: shouldDiverge,
+          // @ts-expect-error the existence of baggage nesscitates an active context
+          links: shouldDiverge ? [{ context: trace.getSpanContext(context.active()) }] : undefined
         });
         if (parentOpts) {
           span.setAttributes({
@@ -136,8 +144,7 @@ export class Instrumentation extends InstrumentationBase {
 
         // get queue information from baggage to make propagation decision
         const currentQueue = this.name;
-        const baggage = propagation.getBaggage(context.active());
-        const lastQueue = baggage?.getEntry('queue')?.value;
+        const lastQueue = propagation.getBaggage(context.active())?.getEntry('queue')?.value;
         const shouldDiverge = !!lastQueue && lastQueue !== currentQueue;
 
         const spanName = `${currentQueue} ${action}`;
