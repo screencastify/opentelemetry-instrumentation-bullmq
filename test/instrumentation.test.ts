@@ -157,7 +157,7 @@ describe('BullMQ Instrumentation', () => {
     it('propagates Job.addJob span from the addBulk span', async () => {
       sandbox.useFakeTimers();
 
-      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
+      await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
 
       const endedSpans = memoryExporter.getFinishedSpans();
 
@@ -277,224 +277,228 @@ describe('BullMQ Instrumentation', () => {
       testUtils.assertPropagation(consumerSpan, producerSpan);
     });
 
-    it('propagates addBulk span from the worker span when from same queue', async () => {
-      sandbox.useFakeTimers();
-      let keepGoing = true;
+    describe('addBulk span', () => {
+      it('propagates from worker span when worker is from same queue', async () => {
+        sandbox.useFakeTimers();
+        let keepGoing = true;
 
-      const [processor, processorDone] = getWait();
+        const [processor, processorDone] = getWait();
 
-      const w = new Worker(queueName, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await processorDone();
-        if (keepGoing) {
-          keepGoing = false;
-          await queue.addBulk([{ name: 'testJob2', data: { test: 'no' } }]);
+        const w = new Worker(queueName, async () => {
           sandbox.clock.tick(1000);
           sandbox.clock.next();
-        }
-      }, { connection: CONFIG })
-      await w.waitUntilReady();
+          await processorDone();
+          if (keepGoing) {
+            keepGoing = false;
+            await queue.addBulk([{ name: 'testJob2', data: { test: 'no' } }]);
+            sandbox.clock.tick(1000);
+            sandbox.clock.next();
+          }
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
 
-      await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
 
-      sandbox.clock.tick(1000);
-      sandbox.clock.next();
-
-      await processor;
-      await w.close();
-
-      const endedSpans = memoryExporter.getFinishedSpans();
-
-      const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
-      const consumerSpans = endedSpans.filter(span => span.name.includes(`${queueName} Queue.addBulk`));
-      const consumerSpan = consumerSpans[consumerSpans.length - 1];
-      const consumerSpanContext = consumerSpan.spanContext();
-
-      // ASSERT
-      assert.strictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
-      assert.strictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
-    });
-
-    it('addBulk span has 0 span links when worker is from same queue', async () => {
-      sandbox.useFakeTimers();
-      let keepGoing = true;
-
-      const [processor, processorDone] = getWait();
-
-      const w = new Worker(queueName, async () => {
         sandbox.clock.tick(1000);
         sandbox.clock.next();
-        await processorDone();
-        if (keepGoing) {
-          keepGoing = false;
-          await queue.addBulk([{ name: 'testJob2', data: { test: 'no' } }]);
+
+        await processor;
+        await w.close();
+
+        const endedSpans = memoryExporter.getFinishedSpans();
+
+        const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
+        const consumerSpans = endedSpans.filter(span => span.name.includes(`${queueName} Queue.addBulk`));
+        const consumerSpan = consumerSpans[consumerSpans.length - 1];
+        const consumerSpanContext = consumerSpan.spanContext();
+
+        // ASSERT
+        assert.strictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
+        assert.strictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
+      });
+
+      it('has 0 span links when worker is from same queue', async () => {
+        sandbox.useFakeTimers();
+        let keepGoing = true;
+
+        const [processor, processorDone] = getWait();
+
+        const w = new Worker(queueName, async () => {
           sandbox.clock.tick(1000);
           sandbox.clock.next();
-        }
-      }, { connection: CONFIG })
-      await w.waitUntilReady();
+          await processorDone();
+          if (keepGoing) {
+            keepGoing = false;
+            await queue.addBulk([{ name: 'testJob2', data: { test: 'no' } }]);
+            sandbox.clock.tick(1000);
+            sandbox.clock.next();
+          }
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
 
-      await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
-
-      sandbox.clock.tick(1000);
-      sandbox.clock.next();
-
-      await processor;
-      await w.close();
-
-      const endedSpans = memoryExporter.getFinishedSpans();
-
-      const consumerSpans = endedSpans.filter(span => span.name.includes(`${queueName} Queue.addBulk`));
-      const consumerSpan = consumerSpans[consumerSpans.length - 1];
-
-      // ASSERT
-      assert.strictEqual(consumerSpan.links.length, 0)
-    });
-
-    it('does not propagate addBulk span from the worker span when from different queue', async () => {
-      sandbox.useFakeTimers();
-
-      const downstreamQueue = 'nextQueue'
-
-      const [processor, processorDone] = getWait();
-      const [nextProcessor, nextProcessorDone] = getWait();
-
-      const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
-      const nextWorker = new Worker(downstreamQueue, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await nextProcessorDone();
-        return { completed: new Date().toTimeString() }
-      }, { connection: CONFIG })
-      await nextWorker.waitUntilReady();
-
-      const w = new Worker(queueName, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await processorDone();
-        nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
 
         sandbox.clock.tick(1000);
         sandbox.clock.next();
 
-        await nextProcessor;
-        await nextWorker.close();
-      }, { connection: CONFIG })
-      await w.waitUntilReady();
+        await processor;
+        await w.close();
+
+        const endedSpans = memoryExporter.getFinishedSpans();
+
+        const consumerSpans = endedSpans.filter(span => span.name.includes(`${queueName} Queue.addBulk`));
+        const consumerSpan = consumerSpans[consumerSpans.length - 1];
+
+        // ASSERT
+        assert.strictEqual(consumerSpan.links.length, 0)
+      });
+
+      it('does not propagate from the worker span when from different queue', async () => {
+        sandbox.useFakeTimers();
+
+        const downstreamQueue = 'nextQueue'
+
+        const [processor, processorDone] = getWait();
+        const [nextProcessor, nextProcessorDone] = getWait();
+
+        const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
+        const nextWorker = new Worker(downstreamQueue, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await nextProcessorDone();
+          return { completed: new Date().toTimeString() }
+        }, { connection: CONFIG })
+        await nextWorker.waitUntilReady();
+
+        const w = new Worker(queueName, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await processorDone();
+          nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+
+          await nextProcessor;
+          await nextWorker.close();
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
 
 
-      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
-
-      sandbox.clock.tick(1000);
-      sandbox.clock.next();
-
-      await processor;
-      await w.close();
-
-      const endedSpans = memoryExporter.getFinishedSpans();
-      const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
-      const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
-      const consumerSpanContext = consumerSpan.spanContext();
-
-      // ASSERT
-      assert.notStrictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
-      assert.notStrictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
-    });
-
-    it('addBulk span has spanLinks when worker is from different queue', async () => {
-      sandbox.useFakeTimers();
-
-      const downstreamQueue = 'nextQueue'
-
-      const [processor, processorDone] = getWait();
-      const [nextProcessor, nextProcessorDone] = getWait();
-
-      const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
-      const nextWorker = new Worker(downstreamQueue, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await nextProcessorDone();
-        return { completed: new Date().toTimeString() }
-      }, { connection: CONFIG })
-      await nextWorker.waitUntilReady();
-
-      const w = new Worker(queueName, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await processorDone();
-        nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
-
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-
-        await nextProcessor;
-        await nextWorker.close();
-      }, { connection: CONFIG })
-      await w.waitUntilReady();
-
-
-      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
-
-      sandbox.clock.tick(1000);
-      sandbox.clock.next();
-
-      await processor;
-      await w.close();
-
-      const endedSpans = memoryExporter.getFinishedSpans();
-      const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
-
-      // ASSERT
-      assert.ok(consumerSpan.links.length > 0)
-    });
-
-    it('addBulk span links to workerSpan when worker is from different queue', async () => {
-      sandbox.useFakeTimers();
-
-      const downstreamQueue = 'nextQueue'
-
-      const [processor, processorDone] = getWait();
-      const [nextProcessor, nextProcessorDone] = getWait();
-
-      const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
-      const nextWorker = new Worker(downstreamQueue, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await nextProcessorDone();
-        return { completed: new Date().toTimeString() }
-      }, { connection: CONFIG })
-      await nextWorker.waitUntilReady();
-
-      const w = new Worker(queueName, async () => {
-        sandbox.clock.tick(1000);
-        sandbox.clock.next();
-        await processorDone();
-        nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
 
         sandbox.clock.tick(1000);
         sandbox.clock.next();
 
-        await nextProcessor;
-        await nextWorker.close();
-      }, { connection: CONFIG })
-      await w.waitUntilReady();
+        await processor;
+        await w.close();
+
+        const endedSpans = memoryExporter.getFinishedSpans();
+        const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
+        const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
+        const consumerSpanContext = consumerSpan.spanContext();
+
+        // ASSERT
+        assert.notStrictEqual(consumerSpanContext.traceId, producerSpanContext.traceId);
+        assert.notStrictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
+      });
+
+      it('has spanLinks when worker is from different queue', async () => {
+        sandbox.useFakeTimers();
+
+        const downstreamQueue = 'nextQueue'
+
+        const [processor, processorDone] = getWait();
+        const [nextProcessor, nextProcessorDone] = getWait();
+
+        const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
+        const nextWorker = new Worker(downstreamQueue, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await nextProcessorDone();
+          return { completed: new Date().toTimeString() }
+        }, { connection: CONFIG })
+        await nextWorker.waitUntilReady();
+
+        const w = new Worker(queueName, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await processorDone();
+          nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+
+          await nextProcessor;
+          await nextWorker.close();
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
 
 
-      await queue.addBulk([{name: 'testJob', data: { test: 'yes' }}]);
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
 
-      sandbox.clock.tick(1000);
-      sandbox.clock.next();
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
 
-      await processor;
-      await w.close();
+        await processor;
+        await w.close();
 
-      const endedSpans = memoryExporter.getFinishedSpans();
-      const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
-      const spanLinkContext = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0].links[0].context;
+        const endedSpans = memoryExporter.getFinishedSpans();
+        const consumerSpan = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0];
 
-      // ASSERT
-      assert.strictEqual(spanLinkContext.spanId, producerSpanContext.spanId)
-    });
+        // ASSERT
+        assert.ok(consumerSpan.links.length > 0)
+      });
+
+      it('links to workerSpan when worker is from different queue', async () => {
+        sandbox.useFakeTimers();
+
+        const downstreamQueue = 'nextQueue'
+
+        const [processor, processorDone] = getWait();
+        const [nextProcessor, nextProcessorDone] = getWait();
+
+        const nextQueue = new Queue(downstreamQueue, { connection: CONFIG });
+        const nextWorker = new Worker(downstreamQueue, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await nextProcessorDone();
+          return { completed: new Date().toTimeString() }
+        }, { connection: CONFIG })
+        await nextWorker.waitUntilReady();
+
+        const w = new Worker(queueName, async () => {
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+          await processorDone();
+          nextQueue.addBulk([{ name: 'testNextJob', data: { test: 'shide' } }])
+
+          sandbox.clock.tick(1000);
+          sandbox.clock.next();
+
+          await nextProcessor;
+          await nextWorker.close();
+        }, { connection: CONFIG })
+        await w.waitUntilReady();
+
+
+        await queue.addBulk([{ name: 'testJob', data: { test: 'yes' } }]);
+
+        sandbox.clock.tick(1000);
+        sandbox.clock.next();
+
+        await processor;
+        await w.close();
+
+        const endedSpans = memoryExporter.getFinishedSpans();
+        const producerSpanContext = endedSpans.filter(span => span.name.includes(`Worker.${queueName}`))[0].spanContext();
+        const spanLinkContext = endedSpans.filter(span => span.name.includes(`${downstreamQueue} Queue.addBulk`))[0].links[0].context;
+
+        // ASSERT
+        assert.strictEqual(spanLinkContext.spanId, producerSpanContext.spanId)
+      });
+    })
+
+
   });
 });
