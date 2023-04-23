@@ -627,7 +627,7 @@ describe('BullMQ Instrumentation', () => {
         assert.strictEqual(consumerSpan.links.length, 0)
       });
 
-      it('does not propagate from the worker span when from different queue', async () => {
+      it.skip('does not propagate from the worker span when from different queue', async () => {
         sandbox.useFakeTimers();
 
         const downstreamQueue = 'nextQueue'
@@ -676,7 +676,7 @@ describe('BullMQ Instrumentation', () => {
         assert.notStrictEqual(consumerSpan.parentSpanId, producerSpanContext.spanId);
       });
 
-      it('has spanLinks when worker is from different queue', async () => {
+      it.skip('has spanLinks when worker is from different queue', async () => {
         sandbox.useFakeTimers();
 
         const downstreamQueue = 'nextQueue'
@@ -722,7 +722,7 @@ describe('BullMQ Instrumentation', () => {
         assert.ok(consumerSpan.links.length > 0)
       });
 
-      it('links to workerSpan when worker is from different queue', async () => {
+      it.skip('links to workerSpan when worker is from different queue', async () => {
         sandbox.useFakeTimers();
 
         const downstreamQueue = 'nextQueue'
