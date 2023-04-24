@@ -13,25 +13,25 @@ limitations under the License.
 
 This derivative work has modifications by Screencastify staff for internal usage
 */
-import type {Attributes, Span} from '@opentelemetry/api'
+import type { Attributes, Span } from '@opentelemetry/api'
 import type * as bullmq from 'bullmq';
-import {context, propagation, SpanKind, SpanStatusCode, trace} from '@opentelemetry/api';
+import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import {
   InstrumentationBase,
   InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
 } from '@opentelemetry/instrumentation';
-import {SemanticAttributes} from '@opentelemetry/semantic-conventions';
+import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import {
   Job,
   JobsOptions,
   ParentOpts,
   Worker,
 } from 'bullmq';
-import {flatten} from 'flat';
+import { flatten } from 'flat';
 
-import {BullMQAttributes} from './attributes';
-import {VERSION} from './version';
+import { BullMQAttributes } from './attributes';
+import { VERSION } from './version';
 
 
 export class Instrumentation extends InstrumentationBase {
@@ -88,9 +88,10 @@ export class Instrumentation extends InstrumentationBase {
     const action = 'Job.addJob';
 
     return function addJob(original) {
-      return async function patch(this:Job, client: never, parentOpts?: ParentOpts): Promise<string> {
-        const spanName = `${this.queueName}.${this.name} ${action}`;
-        // this.opts = this.opts ?? {};
+      return async function patch(this: Job, client: never, parentOpts?: ParentOpts): Promise<string> {
+        const currentQueue = this.queueName;
+
+        const spanName = `${currentQueue}.${this.name} ${action}`;
         const span = tracer.startSpan(spanName, {
           attributes: {
             [SemanticAttributes.MESSAGING_SYSTEM]: BullMQAttributes.MESSAGING_SYSTEM,
@@ -98,7 +99,7 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.JOB_NAME]: this.name,
             ...Instrumentation.attrMap(BullMQAttributes.JOB_OPTS, this.opts),
           },
-          kind: SpanKind.PRODUCER
+          kind: SpanKind.PRODUCER,
         });
         if (parentOpts) {
           span.setAttributes({
@@ -107,7 +108,10 @@ export class Instrumentation extends InstrumentationBase {
           });
         }
         const parentContext = context.active();
+        const shouldDiverge = propagation.getBaggage(parentContext)?.getEntry('shouldDiverge')?.value === 'true';
         const messageContext = trace.setSpan(parentContext, span);
+
+        this.data = {...this.data, shouldDiverge}
 
         propagation.inject(messageContext, this.opts);
         return await context.with(messageContext, async () => {
@@ -134,7 +138,20 @@ export class Instrumentation extends InstrumentationBase {
       return async function patch(this: bullmq.Queue, ...args: [bullmq.Job[]]): Promise<bullmq.Job[]> {
         const names = args[0].map(job => job.name);
 
-        const spanName = `${this.name} ${action}`;
+        let currentContext = context.active();
+
+        // get queue information from baggage to make propagation decision
+        const currentQueue = this.name;
+        const lastQueue = propagation.getBaggage(currentContext)?.getEntry('queue')?.value;
+        const shouldDiverge = !!lastQueue && lastQueue !== currentQueue;
+
+        const spanName = `${currentQueue} ${action}`;
+
+        if (shouldDiverge) {
+          const shouldDivergeBaggage = propagation.createBaggage({ shouldDiverge: { value: 'true' } });
+          currentContext = propagation.setBaggage(currentContext, shouldDivergeBaggage);
+        }
+
         const span = tracer.startSpan(spanName, {
           attributes: {
             [SemanticAttributes.MESSAGING_SYSTEM]: BullMQAttributes.MESSAGING_SYSTEM,
@@ -142,10 +159,20 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.JOB_BULK_NAMES]: names,
             [BullMQAttributes.JOB_BULK_COUNT]: names.length,
           },
-          kind: SpanKind.INTERNAL
+          kind: SpanKind.INTERNAL,
         });
 
-        return Instrumentation.withContext(this, original, span, args);
+        const messageContext = trace.setSpan(currentContext, span);
+
+        return await context.with(messageContext, async () => {
+          try {
+            return await original.apply(this, [...args]);
+          } catch (e) {
+            throw Instrumentation.setError(span, e as Error);
+          } finally {
+            span.end();
+          }
+        });
       };
     };
   }
@@ -155,12 +182,22 @@ export class Instrumentation extends InstrumentationBase {
     const tracer = instrumentation.tracer;
 
     return function patch(original) {
-      return async function callProcessJob(this: Worker, job: any, ...rest: any[]){
+      return async function callProcessJob(this: Worker, job: any, ...rest: any[]) {
         const workerName = this.name ?? 'anonymous';
-        const currentContext = context.active();
-        const parentContext = propagation.extract(currentContext, job.opts);
+        const parentContext = propagation.extract(context.active(), job.opts);
 
-        const spanName = `${job.queueName}.${job.name} Worker.${workerName} #${job.attemptsMade}`;
+        const shouldDiverge = !!job?.data?.shouldDiverge;
+
+        // Set queue baggage in worker patch because its the last place with same queue name
+        const queueBaggage = propagation.createBaggage({ queue: { value: job.queueName } });
+        const baggageContext = propagation.setBaggage(parentContext, queueBaggage);
+
+        const parentSpanCtx = trace.getSpanContext(baggageContext);
+
+        //TODO: get propagation decision from baggage
+        const currentQueue = job.queueName;
+
+        const spanName = `${currentQueue}.${job.name} Worker.${workerName} #${job.attemptsMade}`;
         const span = tracer.startSpan(spanName, {
           attributes: {
             [SemanticAttributes.MESSAGING_SYSTEM]: BullMQAttributes.MESSAGING_SYSTEM,
@@ -175,10 +212,12 @@ export class Instrumentation extends InstrumentationBase {
             [BullMQAttributes.QUEUE_NAME]: job.queueName,
             [BullMQAttributes.WORKER_NAME]: workerName,
           },
-          kind: SpanKind.CONSUMER
-        }, parentContext);
+          kind: SpanKind.CONSUMER,
+          root: shouldDiverge,
+          links: shouldDiverge && parentSpanCtx ? [{ context: parentSpanCtx }] : undefined
+        }, baggageContext);
         if (job.repeatJobKey) span.setAttribute(BullMQAttributes.JOB_REPEAT_KEY, job.repeatJobKey);
-        const messageContext = trace.setSpan(parentContext, span);
+        const messageContext = trace.setSpan(baggageContext, span);
 
         return await context.with(messageContext, async () => {
           try {
@@ -205,7 +244,7 @@ export class Instrumentation extends InstrumentationBase {
   }
 
   private static attrMap(prefix: string, opts: JobsOptions): Attributes {
-    const attrs = flatten({[prefix]: opts}) as Attributes;
+    const attrs = flatten({ [prefix]: opts }) as Attributes;
     for (const key in attrs) {
       if (attrs[key] === undefined) delete attrs[key];
     }

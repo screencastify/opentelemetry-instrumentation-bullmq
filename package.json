@@ -1,6 +1,6 @@
 {
   "name": "@screencastify/opentelemetry-instrumentation-bullmq",
-  "version": "0.2.2-sc.1",
+  "version": "0.2.2-sc.3",
   "description": "Auto-instrumentation for the BullMQ message framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
